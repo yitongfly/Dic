@@ -25,7 +25,7 @@
                 null /* outActivity */, null /* container */,  null /* inTask */);
 ```
 
-​		这里会为HomeActicity创建一个ActivityRecord对象，用来记录这个Activity对应的信息。每个Activity在system_server进程中以ActiivtyRecord对象表示，在应用端以ActivityClientRecord表示。如下图：
+​		这里会为HomeActicity创建一个ActivityRecord对象，用来记录这个Activity的信息。每个Activity在system_server进程中以ActiivtyRecord对象表示，在应用端以ActivityClientRecord表示。如下图：
 
 ```mermaid
 graph LR
