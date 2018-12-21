@@ -42,11 +42,13 @@ graph LR
 	id2-.->id1
 ```
 
+​	在创建home activity的ActivityRecord时，会根据启动Intent里的信息判断这个Activity是一个什么类型的Activity，主要有三种：HOME_ACTIVITY_TYPE，RECENTS_ACTIVITY_TYPE和APPLICATION_ACTIVITY_TYPE。我们的Activity的声明是Home类型的，所以ActivityRecord里的mActivityType被赋值为HOME_ACTIVITY_TYPE。Activity的类名里如果包含“com.android.systemui.recents”，则是一个RECENTS_ACTIVITY_TYPE类型的Activity，其他的都是APPLICATION_ACTIVITY_TYPE类型。
+
 ​	之后调用startActivityUncheckedLocked，这里会判断Activity的launchMode，launchMode的配置是在AndroidManifest中，具体是四种取值：standard，singleTop，singleTask，singleInstance，会影响Activity所在的ActivityStack和TaskRecord。
 
 ​	在SystemServer的startOtherService阶段创建了一个id为HOME_STACK_ID（==0）的ActivityStack，被命名为mHomeStack，这是launcher、systemui等进程所在的ActivityStack。通过moveToFront将新创建的ActivityStack置于front，所说的置于front也就是将新创建的ActivityStack放在mStacks列表的最后，mStacks列表保存着为同一个displayid（如Display.DEFAULT_DISPLAY）所创建的所有ActivityStack。此时ActivityStackSupevisor中的mFocusedStack被置为mStacks列表中的顶层ActivityStack，也就是mHomeStack。
 
-​	在startActivityUncheckedLocked函数中会创建一个id为0的TaskRecord，并添加到mHomeStack的mTaskHistory列表中。之后调用ActivityStack的startActivityLocked。这里会将前面生成的ActivityRecor的放到TaskRecord里mActivities的队尾，准备启动Activity的window动画:
+​	在startActivityUncheckedLocked函数中会创建一个id为0的TaskRecord，并添加到mHomeStack的mTaskHistory列表中。之后调用ActivityStack的startActivityLocked。这里会将前面生成的ActivityRecord放到id为0的TaskRecord里mActivities的队尾，这样这个home activity就是在id为0的ActivityStack的Id为0的TaskRecord里了。之后准备启动Activity的window动画:
 
 ```java
 final void startActivityLocked(ActivityRecord r, boolean newTask,
@@ -145,7 +147,12 @@ private boolean resumeTopActivityInnerLocked(ActivityRecord prev, Bundle options
          mWindowManager.prepareAppTransition(AppTransition.TRANSIT_ACTIVITY_OPEN, false);
     }
 .......
-     mStackSupervisor.startSpecificActivityLocked(next, true, true);
+    f (next.app != null && next.app.thread != null) {
+     ······
+    }else{
+        ......
+        mStackSupervisor.startSpecificActivityLocked(next, true, true);
+    }
 }
 ```
 
@@ -543,9 +550,9 @@ private Activity performLaunchActivity(ActivityClientRecord r, Intent customInte
 
 ​    r.packageInfo.makeApplication是获取在bindApplication阶段创建的Application对象，也就是ActivityThread中的mInitialApplication。
 
-​    createBaseContextForActivity通过调用createActivityContext为Activity创建ContextImpl对象。这与在bindApplication阶段通过createAppContext创建的ContextImpl并不相同。ActivityContext涉及到resource、configuration的更新，而AppContext则没有这个需求。在多显示设备的情况下，ActivityContext还涉及到显示设备的displayId，而AppContext则一直使用Display.INVALID_DISPLAY作为createDisplayWithId的参数。通过不同的Context获得的Configuration可能是不一样的。创建的ContextImpl的mOuterContext就是上面加载的Activity。通过ContextImpl的mOuterContext就可以判断出这个ContextImpl是为Application创建的还是为Activity创建的。
+​    createBaseContextForActivity通过调用createActivityContext为Activity创建ContextImpl对象。这与在bindApplication阶段通过createAppContext创建的ContextImpl并不相同。ActivityContext涉及到resource、configuration的更新，而AppContext则没有这个需求。在多显示设备的情况下，ActivityContext还涉及到显示设备的displayId，而AppContext则一直使用Display.INVALID_DISPLAY作为createDisplayWithId的参数。通过不同的Context获得的Configuration可能是不一样的。创建的ContextImpl的mOuterContext就是上面加载的Activity。通过ContextImpl的mOuterContext就可以判断出这个ContextImpl是为Application创建的还是为Activity创建的。 
 
-​    activity.attach将ContextImpl，ActivityThreadad，Instrumentation等传给Activity对象。Activity类是ContextThemeWrapper的子类，ContextThemeWrapper是ContextWrapper的子类，ContextWrapper是Context的子类，ContextImpl也是Context的子类，我们这里传入的appContext最终会被赋值给Context的mBase。attach的过程中有几个变量的初始化:{mWindow = new PhoneWindow(this);mUiThread = Thread.currentThread();mMainThread = aThread;mApplication = application;mWindowManager = mWindow.getWindowManager(…);mToken = token;mWindowManager = mWindow.getWindowManager();mParent = parent;}等。对普通的Activity来说，传入的参数r.parent是null，所以不存在父parent。但是在测试环境下，parent则是不为空的，这样使得测试程序可以监测Activity的状态和信息。token是在new ActivityRecord阶段生成的，用于Activity与WindowManagerService之间的通信。 
+​	activity.attach将ContextImpl，ActivityThreadad，Instrumentation等传给Activity对象。Activity类是ContextThemeWrapper的子类，ContextThemeWrapper是ContextWrapper的子类，ContextWrapper是Context的子类，ContextImpl也是Context的子类，我们这里传入的appContext最终会被赋值给Context的mBase。attach的过程中有几个变量的初始化:{mWindow = new PhoneWindow(this);mUiThread = Thread.currentThread();mMainThread = aThread;mApplication = application;mWindowManager = mWindow.getWindowManager(…);mToken = token;mWindowManager = mWindow.getWindowManager();mParent = parent;}等，这里mToken的值来自于system_server，就是ActivityRecord中的appToken（它是一个ActivityRecord$Token对象，继承自IApplicationToken.Stub），是在new ActivityRecord阶段生成的，这个Binder对象不仅与WMS通信，还负责与应用中的ActivityThread通信。对普通的Activity来说，传入的参数r.parent是null，所以不存在父parent。但是在测试环境下，parent则是不为空的，这样使得测试程序可以监测Activity的状态和信息。
 
 ​    mInstrumentation.callActivityOnCreate开始进入Activity的onCreate，在Activiy的onCreate里会进一步调用Activity里Fragment的onCreateView和onActivityCreated。Application的onCreate在bindApplication阶段就调用过，在此处则是回调Application里注册的ActivityLifecycleCallbacks的onActivityCreated函数，在该Application下的每一个Activity在onCreate时都会回调这个Callback。这些都是在我们的MainActivity的onCreate之前被调用的，之后才是MainActivity的onCreate方法。在这个函数中，mCalled 会被置为true。如果MainActivity里不调用super.onCreate，那么mCalled还是false，就会抛出SuperNotCalledException。
 
@@ -640,8 +647,8 @@ sequenceDiagram
 	AT--xAMS:(Binder call)attachApplication()
 	AMS->>AMS:attachApplicationLocked()
 	AMS->>AS:attachApplicationLocked()
-	AS->>AS:realStartActivityLocked()
-	AS--xAPT:scheduleLaunchActivity()
+	AS->>ASS:realStartActivityLocked()
+	ASS--xAPT:scheduleLaunchActivity()
 	APT-->>AT:handleLaunchActivity()
 	AT-->>+AT:performLaunchActivity()
 	AT-->>AP:onCreate()
