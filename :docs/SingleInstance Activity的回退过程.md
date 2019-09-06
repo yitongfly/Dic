@@ -129,7 +129,11 @@ private boolean resumeTopActivityInnerLocked(ActivityRecord prev, Bundle options
 
 <video src="Single_Instance.m4v"></video>
 
-​	2)再考虑一个场景，这次是两个进程P和P1，P1里有个CallSingleActivity，它可以通过Intent打开上面的SingleInsActivity，SingleInsActivity运行在P进程里
+​	
+
+
+
+2)再考虑一个场景，这次是两个进程P和P1，P1里有个CallSingleActivity，它可以通过Intent打开上面的SingleInsActivity，SingleInsActivity运行在P进程里
 
 ​	先打开CallSingleActivity，再打开SingleInsActivity，打开顺序是
 
@@ -151,4 +155,39 @@ private boolean resumeTopActivityInnerLocked(ActivityRecord prev, Bundle options
 
 ​	这个其实原因和上面是一样的，第一种情况的回退与1）中从ActivityB回退到SingleInsActivity的原理相同，上一个TaskRecord里的Activity全部finish了且上一个TaskRecord的mTaskToReturnTo是APPLICATION_ACTIVITY_TYPE，显示的下一个Activity就是同ActivityStack中的下一个TaskRecord里的Activity，也就从CallSingleActivity回退到了SingleInsActivity。
 
-​	但是在第二中情况中，由于显示了一次RecentActivity，而RecentActivity是运行在HomeStack中的，当再次把SingleInsActivity置顶的时候，由于仍然要运行insertTaskAtTop函数，insertTaskAtTop里的fromHome为true了，TaskCommon的mTaskToReturnTo就要重新赋值了，RecentActivity所在Task的taskType是RECENTS_ACTIVITY_TYPE，但是AMS对这种类型Task的处理方式与HOME_ACTIVITY_TYPE非常相似，恢复SingleInsActivity的时候，TaskSingle的mTaskToReturnTo不会被赋值为RECENTS_ACTIVITY_TYPE而是被赋值为HOME_ACTIVITY_TYPE，所以当SingleInsActivity回退的时候也就回退到了HomeActivity。
+​	但是在第二种情况中，由于显示了一次RecentActivity，而RecentActivity是运行在HomeStack中的，当再次把SingleInsActivity置顶的时候，由于仍然要运行insertTaskAtTop函数，insertTaskAtTop里的fromHome为true了，TaskCommon的mTaskToReturnTo就要重新赋值了，RecentActivity所在Task的taskType是RECENTS_ACTIVITY_TYPE，但是AMS对这种类型Task的处理方式与HOME_ACTIVITY_TYPE非常相似，恢复SingleInsActivity的时候，TaskSingle的mTaskToReturnTo不会被赋值为RECENTS_ACTIVITY_TYPE而是被赋值为HOME_ACTIVITY_TYPE，所以当SingleInsActivity回退的时候也就回退到了HomeActivity。
+
+## 进程间的回退
+
+​		对于进程间的回退，如果两个进程在一个ActivityStack上，A进程启动了B进程，然后手动kill A进程，此时按返回键，从B进程回退到A进程。效果上看，似乎A进程根本没被杀死，返回的Activitiy还是原来的Activity。而实际上，这已经是一个新的Activity了，因为A进程已经重新创建了（这是废话～～）。
+
+​		返回到B的时候看着还和原来一样，是因为返回调用到ActivityStack.resumeTopActivityInnerLocked的时候，获取到的next就是A进程的topActivity next，而next.app和next.app.thread都为空，进入的就是下面else的流程：
+
+```java
+    private boolean resumeTopActivityInnerLocked(ActivityRecord prev, Bundle options) {
+     	......
+      else {
+            // Whoops, need to restart this activity!
+            if (!next.hasBeenLaunched) {
+                next.hasBeenLaunched = true;
+            } else {
+                if (SHOW_APP_STARTING_PREVIEW) {
+                    mWindowManager.setAppStartingWindow(
+                            next.appToken, next.packageName, next.theme,
+                            mService.compatibilityInfoForPackageLocked(
+                                    next.info.applicationInfo),
+                            next.nonLocalizedLabel,
+                            next.labelRes, next.icon, next.logo, next.windowFlags,
+                            null, true);
+                }
+                if (DEBUG_SWITCH) Slog.v(TAG_SWITCH, "Restarting: " + next);
+            }
+            if (DEBUG_STATES) Slog.d(TAG_STATES, "resumeTopActivityLocked: Restarting " + next);
+            mStackSupervisor.startSpecificActivityLocked(next, true, true);
+        } 
+    }
+```
+
+​	 通过 mStackSupervisor.startSpecificActivityLocked(next, true, true); restart新的next，传入的next附带了上次启动next时传入的intent参数，所以会用next已保存的intent重新启动next，也就是A进程的topActiivty，所以我们看到的效果和A进程被kill前的样子基本一样。
+
+​	但是如果A进程的topAcitivity初始化时使用的数据不是通过intent传入的，比如是从进程的Application类获取的，而每次获取以后数据都会变化，那么就会发现restart 以后的Actiivty数据变成了Application里的初始数据，这证明了Activity、Application都是被重新初始化了的。

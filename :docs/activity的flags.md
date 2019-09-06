@@ -18,11 +18,13 @@ LAUNCH_SINGLE_INSTANCE(android:launchMode="singleInstance"):
 
 LAUNCH_SINGLE_TASK(android:launchMode="singleTask):
 
+​	 单独设置成singleTask并不会创建新的task，而是跟随同一应用中启动singleTask的sourceActivity。除非singleTask是应用启动的第一个Activity。
+
 ​	若不是被Activity启动且被指定了要处于哪个task中(通常从recent启动会出现这种情况)，则这个Activity必须是该task的root，否则创建新的task存放Activity。
 
 ​	<span style="color:cyan">在启动的过程中，会将Activity所在Task中从top到被启动Activity之间的所有ActivityRecord都清空。	</span>
 
-​	再次启动时，若该Activity已经是top，则不会再启动新的实例。若不是top，则将Actiivty所在的task置顶，将task中该Activity以上的Activity都finish，使该Activity为top，然后调用Activity的onNewIntent。
+​	 再次启动时，若该Activity已经是top，则不会再启动新的实例。若不是top，则将Actiivty所在的task置顶，将task中该Activity以上的Activity都finish，使该Activity为top，然后调用Activity的onNewIntent。
 
 ​	singleTask的Activity启动时，AndroidManifest中若指定了"android:taskAffinity"属性，那么singleTask在启动过程中会查询系统中是否有rootAffinity与Activity中指定的taskAffinity相同的TaskRecord，如果有，singleTask的Activity会进入到这个Task中，如果没有，singleTask的Activity创建并加入这个新的Task（若'android:taskAffinity=""'，即taskAffinity为空，仍然会创建新的Task）。如果没有这个配置，则以app默认的包名为taskAffinity。
 
@@ -36,7 +38,7 @@ subgraph Task:com.app.test
 id1(ActivityA)
 end
 subgraph Task:com.app.affinity
-id2(ActivityB)---id3(SingleTaskActivity)
+id2(SingleTaskActivity)---id3(ActivityB)
 end
 end
 subgraph no taskAffinity
@@ -47,7 +49,7 @@ end
 end
 ```
 
-​	单独配置taskAffinity而不与singleTask配合则不会有这个效果，即使系统中没有taskAffinity配置的TaskRecord，也不会创建与taskAffinity配置名称相同的新TaskRecord。若需要这种Task效果，要与singleTask、singleInstance或者Intent.FLAG_ACTIVITY_NEW_TASK配合使用。
+​	单独配置taskAffinity而不与singleTask或singleInstance配合则不会有这个效果，即使系统中没有taskAffinity配置的TaskRecord，也不会创建与taskAffinity配置名称相同的新TaskRecord。若需要这种Task效果，要与singleTask、singleInstance或者Intent.FLAG_ACTIVITY_NEW_TASK配合使用。 	
 
 ​	使用隐式方式（如通过action）启动普通Activity时，会在启动Activity所在的Task中创建新的实例；使用隐式方式启动singleTask的Activity时，会将singleTask Activity所在的Task置于到前端，并清空singleTask  Activity以上的Activity，但是Task中singleTask Activity以下的Activity仍然保留。
 

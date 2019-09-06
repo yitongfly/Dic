@@ -13,7 +13,7 @@
     }
 ```
 
-​	这是一个没有Component，没有Uri，只有Action和Category的Intent，但是Category “android.intent.category.HOME”是比较特殊的，它表示这是一个Home Activity，是系统开机后显示的第一个Actiivty。但是仅有这个Intent是不知道它是哪个Activity的，还要从PKMS中获取具体的Activity信息aInfo，才能start这个Home Activity。获取到对应的Intent后，AMS为这个Intent增加一个FLAG_ACTIVITY_NEW_TASK的flag，然后调用mStackSupervisor.startHomeActivity(intent, aInfo, reason/*systemReady*/);mStackSupervisor.startHomeActivity会再调用startActivityLockd：
+​	这是一个没有Component，没有Uri，只有Action和Category的Intent，但是action "android.intent.action.MAIN"和 Category “android.intent.category.HOME”的组合是比较特殊的，它表示这是一个Home Activity，是系统开机后显示的第一个Actiivty。但是仅有这个Intent是不知道它是哪个Activity的，还要从PKMS中获取具体的Activity信息aInfo，才能start这个Home Activity。获取到对应的Intent后，AMS为这个Intent增加一个FLAG_ACTIVITY_NEW_TASK的flag，然后调用mStackSupervisor.startHomeActivity(intent, aInfo, reason/*systemReady*/);mStackSupervisor.startHomeActivity会再调用startActivityLockd：
 
 ```java
  startActivityLocked(null /* caller */, intent, null /* resolvedType */, aInfo,
@@ -25,7 +25,7 @@
                 null /* outActivity */, null /* container */,  null /* inTask */);
 ```
 
-​		这里会为HomeActicity创建一个ActivityRecord对象，用来记录这个Activity的信息。每个Activity在system_server进程中以ActiivtyRecord对象表示，在应用端以ActivityClientRecord表示。如下图：
+​		这里会为HomeActivity创建一个ActivityRecord对象，用来记录这个Activity的信息。每个Activity在system_server进程中以ActiivtyRecord对象表示，在应用端以ActivityClientRecord表示。如下图：
 
 ```mermaid
 graph LR
@@ -46,7 +46,7 @@ graph LR
 
 ​	之后调用startActivityUncheckedLocked，这里会判断Activity的launchMode，launchMode的配置是在AndroidManifest中，具体是四种取值：standard，singleTop，singleTask，singleInstance，会影响Activity所在的ActivityStack和TaskRecord。
 
-​	在SystemServer的startOtherService阶段创建了一个id为HOME_STACK_ID（==0）的ActivityStack，被命名为mHomeStack，这是launcher、systemui等进程所在的ActivityStack。通过moveToFront将新创建的ActivityStack置于front，所说的置于front也就是将新创建的ActivityStack放在mStacks列表的最后，mStacks列表保存着为同一个displayid（如Display.DEFAULT_DISPLAY）所创建的所有ActivityStack。此时ActivityStackSupevisor中的mFocusedStack被置为mStacks列表中的顶层ActivityStack，也就是mHomeStack。
+​	在SystemServer的startOtherService阶段创建了一个id为HOME_STACK_ID（==0）的ActivityStack，被命名为mHomeStack，这是launcher、RecentActivity等Activity所在的ActivityStack。通过moveToFront将新创建的ActivityStack置于front，所说的置于front也就是将新创建的ActivityStack放在ActivityDisplay.mStacks列表的最后，mStacks列表保存着为同一个displayid（如Display.DEFAULT_DISPLAY）所创建的所有ActivityStack。此时ActivityStackSupevisor中的mFocusedStack被置为mStacks列表中的顶层ActivityStack，也就是mHomeStack。
 
 ​	在startActivityUncheckedLocked函数中会创建一个id为0的TaskRecord，并添加到mHomeStack的mTaskHistory列表中。之后调用ActivityStack的startActivityLocked。这里会将前面生成的ActivityRecord放到id为0的TaskRecord里mActivities的队尾，这样这个home activity就是在id为0的ActivityStack的Id为0的TaskRecord里了。之后准备启动Activity的window动画:
 
@@ -293,6 +293,8 @@ private void attach(system) {
 
 ​	mgr.attachApplication(mAppThread)将创建的ApplicationThread对象通过ActivityManagerNative传入AMS中，这个mAppThread将成为AMS与应用进程沟通的桥梁。
 
+​	ApplicationThread的Binder代理类ApplicationThreadProxy中，binder调用的方法transact中传入了一个参数：IBinder.FLAG_ONEWAY，这个参数表示这次的binder调用是异步的，不需要等待返回结果，所以，system_server和应用进程间通过ApplicationThread进行通信时，除了dumpMemInfo函数，其他函数都是被异步调用，system_server会立刻返回处理其他流程。此时，应用进程的ApplicationThread变成了server，system_server变成了client。
+
 ```java		
 private final boolean attachApplicationLocked(IApplicationThread thread,int pid) {
     ProcessRecord app;
@@ -344,7 +346,7 @@ private final boolean attachApplicationLocked(IApplicationThread thread,int pid)
 
 ​	attachApplication是由ActivityManagerProxy调用binder接口与AMS通信，在AMS的mPidsSelfLocked中取出android.letv.launcher的pid对应的ProcessRecord。若获取ProcessRecord为空，表示pid无效（Process.start失败），那么要将进程杀死，然后将ApplicationThread退出（mLooper退出）。ApplicationThread里面有很多与Activity、Service、provider相关的接口，scheduleExit、scheduleLaunchActivity、schedulePauseActivity、scheduleCreateService等。这些schedulexxx函数给mH这个Handler发送Message，mH再调用ActivityThread进行处理。ApplicationThread退出就是通过mH发送EXIT_APPLICATION这个消息，将mLooper退出(将mLooper退出，ActivityThread的main就到了最后一句Throw new RuntimeException，进程随即退出）。
 
-​    如果当前的PrcessRecord已经被别的ApplicationThread attach过了，那么会先清理这个ProcessRecord相关的信息。handleAppDiedLocked的参数分别表示ProcessRecord的引用，该进程是否在重启，是否允许进程的重启。若进程在重启中，那么在清理的过程中，app不会从AMS的mLruProcesses列表中删除;是否允许进程重启是真对有Service的进程，若存在Service则会根据Service的状态判断是否可以将Service再拉起一次。
+​    如果当前的PrcessRecord已经被别的ApplicationThread attach过了，那么会先清理这个ProcessRecord相关的信息。handleAppDiedLocked的参数分别表示ProcessRecord的引用，该进程是否在重启，是否允许进程的重启。若进程在重启中，那么在清理的过程中，app不会从AMS的mLruProcesses列表中删除;是否允许进程重启是针对有Service的进程，若存在Service则会根据Service的状态判断是否可以将Service再拉起一次。
 
    当应用进程死亡或者systemservier与IApplicationThread的binder链接断开的时候，AppDeathRecipient的binderDied函数就会被调用，处理进程死亡后的事宜。
 
@@ -356,7 +358,7 @@ private final boolean attachApplicationLocked(IApplicationThread thread,int pid)
 
 ​    2.由于当前进程不是“android”进程，于是为当前线程设置一个WarningContextClassLoader对象，这个class loader是线程级别的，在当前线程上调用getContextClassLoader时获取的就是这个WarningContextClassLoader。而对于“android”进程，则设置的是null。
 
-​    3.创建Context，其实是生成一个ContextImpl对象。创建ContextImpl对象有三个函数，因为传入参数的不同，会生成不同的ContextImpl：SystemContext，AppContext，ActivityContext，这三个context分别是“android”进程的context,它的mPackageInfo是null，进程的context，activity的context。这里调用的是createAppContext，也就是进程的Context。(Activity自身就是一个Context，但是它的很多实现是调用父类的mBase变量的相关方法去实现的，这个mBase也是一个Context，那Activity为什么要用mBase这个Context实现功能而不是自己实现呢？因为ContextThemeWrapper只是一个代理类，通过这个代理类可以给mBase赋不同的值，去实现不同的功能。比如在正常运行环境中，mBase是ContextImpl对象，在测试时，mBase就可以是MockContext，在IDE上模拟layout效果时使用BridgeContext，通过这样的方式，不同的使用场景下可以实现不同的效果，同时不需要改动Activity的代码)
+​    3.创建Context，其实是生成一个ContextImpl对象。创建ContextImpl对象有三个函数，因为传入参数的不同，会生成不同的ContextImpl：SystemContext，AppContext，ActivityContext，这三个context分别是“android”进程的context（它的mPackageInfo是null），进程的context，activity的context。这里调用的是createAppContext，也就是进程的Context。(Activity自身就是一个Context，但是它的很多实现是调用父类的mBase变量的相关方法去实现的，这个mBase也是一个Context，那Activity为什么要用mBase这个Context实现功能而不是自己实现呢？因为ContextThemeWrapper只是一个代理类，通过这个代理类可以给mBase赋不同的值，去实现不同的功能。比如在正常运行环境中，mBase是ContextImpl对象，在测试时，mBase就可以是MockContext，在IDE上模拟layout效果时使用BridgeContext，通过这样的方式，不同的使用场景下可以实现不同的效果，同时不需要改动Activity的代码)
 
 ​    4.设置context的package name，一个context有两种package name：BasePackageName和OpPackageName（区别未知）
 
@@ -387,7 +389,9 @@ private final boolean attachApplicationLocked(IApplicationThread thread,int pid)
 
 ​    这三个index的关系是：0<=mLruProcessServiceStart<=mLruProcessActivityStart（注意其中的=号） 
 
-​    mStackSupervisor.attachApplicationLocked(app）在最后对当前系统中现有ActivityRecord的显示状态进行判断，确保每个Activity的显示都是正确的。而在此前通过realStartActivityLocked真正的启动了系统中的第一个Activity： 
+​	AMS的attachApplicationLocked函数最后会对进程所需要处理的Actiivty、Service和Broadcast都进行一遍处理，初始化所需要的Activity、Service或BroadcastReceiver，这时进程中才有了第一个组件。
+
+​    处理Actiivty时调用的mStackSupervisor.attachApplicationLocked(app）函数对当前系统中现有ActivityRecord的显示状态进行判断，确保每个Activity的显示都是正确的。而在此前通过realStartActivityLocked真正的启动了系统中的第一个Activity： 
 
 ```java
 boolean attachApplicationLocked(ProcessRecord app) throws RemoteException {
@@ -460,7 +464,7 @@ final boolean realStartActivityLocked(ActivityRecord r,ProcessRecord app, boolea
 
 ​	r.app = app；终于将ActivityRecord和ProcessRecord关联起来了。
 
-​       scheduleLaunchActivity是通过ApplicationThread与ActivityThread交互，也就是我们的MainActivity线程。如果app.thread.scheduleLaunchActivity没有抛出异常，那么更新ActivityStack的mLRUActivities列表，将当前Activity放在mLRUActivities的最尾端。mLRUActivities是根据Activity最近的使用顺序排列，最尾端的Activity是最后一次使用的Activity，index为0的Activity则是距离上次使用时间最长的Activity。
+​       scheduleLaunchActivity是通过ApplicationThread与ActivityThread交互，也就是我们的MainActivity线程。在此前会给ActivityStack.mHandler发送一个LAUNCH_TICK_MSG,如果onWindowDrawn被调用的时间查过了500ms，就会报告Activity的启动缓慢。如果app.thread.scheduleLaunchActivity没有抛出异常，那么更新ActivityStack的mLRUActivities列表，将当前Activity放在mLRUActivities的最尾端。mLRUActivities是根据Activity最近的使用顺序排列，最尾端的Activity是最后一次使用的Activity，index为0的Activity则是距离上次使用时间最长的Activity。
 
 ​    前边都顺利且Activity是要resume，那么stack.minimalResumeActivityLocked（r）会更新ActivityRecord的状态:{r.state = ActivityState.RESUMED;r.stopped = false；mResumedActivity = r;}
 
@@ -660,7 +664,9 @@ sequenceDiagram
 	AT-->>A:onStateNotSaved()
 	AT-->>A:performResume()
 	A-->>A:onResume()
-	A-->>-A:onPostResume()
+	A-->>A:onPostResume()
+	AT-->>-APT:activityResumed()
+	APT--xAMS:activityResumed()
 ```
 
 ​	应用在与AMS交互的时候是以application为单位的，两者之间的直接联系就是ApplicatonThread这个Binder对象，AMS与应用进行交互也是通过这个Binder对象，与Activity和Application生命周期有关的调用都要通过这个Binder对象来完成。

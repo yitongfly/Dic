@@ -75,13 +75,13 @@ final int startActivityUncheckedLocked(final ActivityRecord r, ActivityRecord so
           r.setTask(sourceTask, null);
     }
     ......
-    targetStack.mLastPausedActivity = null;
+    targetStack.mLastPausedActivity = q null;
     targetStack.startActivityLocked(r, newTask, doResume, keepCurTransition, options);
                 
 }
 ```
 
-​	通过sourceRecord就可以获得sourceRecord所在的TaskRecord和ActivityStack，如果source activity并不是在finish的过程中，那么新activity的ActivityStack就是source的ActivityStack；若source activity正在finish，那么就不能将新Activity放在source activity所在的Task，此时为新Activity添加Intent.FLAG_ACTIVITY_NEW_TASK 的flag，等待创建新的Task。如果在启动应用的时候，Intent里没有加入FLAG_ACTIVITY_NEW_TASK的flag，且在前面的流程中也没有增加FLAG_ACTIVITY_NEW_TASK标志，那么流程进入的就是(sourceRecord != null) ，在这里targetStack.moveToFront将HomeStack放到mStacks的最前端，targetStack.moveTaskToFrontLocked将source activity所在TaskRecord放到所在HomeStack的最前端，最后通过r.setTask将新ActivityRecord从原来所在的task中删除，并将sourceTask赋值给SecondActivity的task,但是SecondActivity并没有放入到sourceTask中，直到调用ActivityStack的startActivityLocked，SecondActivity的ActivityRecord才会进入sourceTask的mActivities列表里。
+​	通过sourceRecord就可以获得sourceRecord所在的TaskRecord和ActivityStack，如果source activity并不是在finish的过程中，那么新activity的ActivityStack就是source的ActivityStack；若source activity正在finish，那么就不能将新Activity放在source activity所在的Task，此时为新Activity添加Intent.FLAG_ACTIVITY_NEW_TASK 的flag，等待创建新的Task。如果在启动应用的时候，Intent里没有加入FLAG_ACTIVITY_NEW_TASK的flag，且在前面的流程中也没有增加FLAG_ACTIVITY_NEW_TASK标志，那么流程进入的就是(sourceRecord != null) ，在这里targetStack.moveToFront将HomeStack放到mStacks的最前端，targetStack.moveTaskToFrontLocked将source activity所在TaskRecord放到所在HomeStack的最前端，最后通过r.setTask将d新ActivityRecord从原来所在的task中删除，并将sourceTask赋值给SecondActivity的task,但是SecondActivity并没有放入到sourceTask中，直到调用ActivityStack的startActivityLocked，SecondActivity的ActivityRecord才会进入sourceTask的mActivities列表里。
 
 ​	那么，什么情况下启动Activity的时候可以创建ActivityStack呢？新的ActivityStack的创建是通过createStackOnDisplay函数，这个函数被调用的情况一般分以下四种： 系统创建Home ActivityStack，从recent恢复一个task，启动一个新的Activity，SystemUI对系统中的task进行整理。最常见的就是启动一个新的Activity，这时createStackOnDisplay是通过ActivityStackSupervisor.computeStackFocus被调用的，在这里判断是否要创建新的ActivityStack：
 
@@ -159,7 +159,9 @@ private boolean resumeTopActivityInnerLocked(ActivityRecord prev/*ActivityRecord
 
 ​    ActivityThread根据传过来的IBinder查找ActivityThread的mActivities中缓存的ActivityRecordClient，对这个ActivityRecordClient对象r进行处理。
 
-​    几个回调的发生顺序是：onUserInteraction()->onUserLeaveHint()->onSaveInstanceState()->onPause()->onWindowFocusChanged()
+​    几个回调的发生顺序是：
+
+​		onUserInteraction()->onUserLeaveHint()->onSaveInstanceState()->onPause()->onWindowFocusChanged()
 
 ​    在onPause结束后，Activity的mResumed置为false，mFinished仍为false，ActivityRecordClient的paused置为true。在Activity.java里的状态没有mPause的，有的是mResumed、mStopped、mFinished、mDestroyed，ActivityRecord中记录的状态则是startsNotResumed、paused、stopped这三个。
 
@@ -224,9 +226,9 @@ private boolean resumeTopActivityInnerLocked(ActivityRecord prev/*ActivityRecord
 
 ​	如果HomeActivity的启动intent或者ActivityInfo中有FLAG_NO_HISTORY标志，这个Activity就会直接finish，而没有stop过程。对于其他的Activity，state置为ActivityState.STOPPING，在stop操作成功前stopped置为false.AMS开始调用scheduleStopActivity。scheduleStopActivity会传入一个参数r.visible，能看得见Activity时r.visible就是true，看不见r.visible就是false，比如最前端的Activity设置成了对话框的主题，那么后面的Activity的visible也是true，但如果最前端的Activity是全屏的，那么visible就是false。因为visible的不同，传入scheduleStopActivity后的处理就会不同：
 
-​	1.如果被stop的ActivityRecord的visible为true，ApplicationThread会给mH发STOP_ACTIVITY_SHOW消息，ApplicationThread调用handleStopActivity函数，其中一个参数show传入的是true，这个show决定了被覆盖的Activity是否真的stop。因为show为true，则不会stop，只将对应ActivityRecordClient的pause置为true；
+​	1.如果被stop的ActivityRecord的visible为true，ApplicationThread会给mH发STOP_ACTIVITY_SHOW消息，ApplicationThread调用handleStopActivity函数，其中一个参数show传入的是true，这个show决定了被覆盖的Activity是否真的stop。因为show为true，则不会stop，只将对应ActivityRecordClient的pause置为true，不会进入onStop；
 
-​	2.如果被stop的ActivityRecord的visible为false，ApplicationThread会给mH发STOP_ACTIVITY_HIDE消息，ApplicationThread调用handleStopActivity函数，show传入false，这表示被覆盖的Activity要进行真正的stop，开始会处理HomeActivity的Window，fragment和打开的数据库Cursor，之后将Activity的mStopped置为true，mResumed置为false，ActivityRecordClient的stopped和paused都置为true。 
+​	2.如果被stop的ActivityRecord的visible为false，ApplicationThread会给mH发STOP_ACTIVITY_HIDE消息，ApplicationThread调用handleStopActivity函数，show传入false，这表示被覆盖的Activity要进行真正的stop，调用Activity的onStop方法，开始会处理HomeActivity的Window，fragment和打开的数据库Cursor，之后将Activity的mStopped置为true，mResumed置为false，ActivityRecordClient的stopped和paused都置为true。 
 
 ​	但是Activity被Dialog覆盖的时候，Activity并不会stop，但是会触发Activity的onWindowFocusChanged。
 
@@ -260,6 +262,7 @@ sequenceDiagram
 	AS->>ASS:pauseBackStacks()
 	AS->>-AS:startPausingLocked()
 	AS--xAPT:schedulePauseActivity()
+	APT->>AMS: return
 	APT-->>+AT:handlePauseActivity()
 	AT-->>A:onUserInteraction()
 	AT-->>A:onUserLeaveHint()
@@ -275,6 +278,7 @@ sequenceDiagram
 	ASS->>AMS:getProcessRecordLocked()
 	AS->>-ASS:realStartActivityLocked()
 	ASS--xAPT:scheduleLaunchActivity()
+	APT->>AMS:return
 	APT-->>AT:handleLaunchActivity()
 	AT-->>+AT:performLaunchActivity()
 	AT-->>AP:onCreate()
@@ -289,9 +293,10 @@ sequenceDiagram
 	A-->>-A:onPostResume()
 	WMS--xA:onEnterAnimationComplete()
 	AT--xAMS:activityIdle（）
-	AMS-->ASS:activityIdleInternalLocked（）
+	AMS->>ASS:activityIdleInternalLocked（）
 	ASS->>AS:stopActivityLocked()
 	AS--xAPT:scheduleStopActivity()
+	APT->>AMS:return
 	APT-->>+AT:handleStopActivity()
 	AT-->>A:onCreateDescription()
 	A-->>A:onSaveInstanceState()
@@ -300,8 +305,4 @@ sequenceDiagram
 ```
 
 ​	
-
-
-
-
 
